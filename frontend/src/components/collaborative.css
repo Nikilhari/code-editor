@@ -1,0 +1,291 @@
+/* Collaborative Editor Styles */
+
+.remote-cursor {
+  position: relative;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.cursor-label {
+  position: absolute;
+  top: -22px;
+  left: -2px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  white-space: nowrap;
+  z-index: 1001;
+  pointer-events: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.remote-selection {
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
+  }
+}
+
+.remote-cursor {
+  animation: blink 1.5s infinite;
+}
+
+/* Enhanced user list styling */
+.user-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Active user indicator */
+.user-active {
+  position: relative;
+}
+
+.user-active::after {
+  content: "●";
+  position: absolute;
+  right: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #00ff00;
+  font-size: 8px;
+  animation: pulse 1s infinite;
+}
+
+/* Typing indicator animation */
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.typing-dots .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: #007bff;
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dots .dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-dots .dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots .dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  30% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+/* Line highlighting and marking styles */
+.user-line-highlight {
+  position: relative;
+  transition: background-color 0.3s ease;
+}
+
+.user-line-content {
+  position: relative;
+  transition: all 0.3s ease;
+  border-radius: 2px;
+}
+
+/* CodeMirror line highlighting */
+.CodeMirror-line.user-line-highlight {
+  background-color: rgba(0, 123, 255, 0.1) !important;
+  border-left: 3px solid #007bff;
+  padding-left: 4px;
+}
+
+/* Marked lines styles */
+.CodeMirror-line.marked-line {
+  background-color: rgba(255, 215, 0, 0.1) !important;
+  border-left: 4px solid #ffd700;
+  padding-left: 4px;
+}
+
+.line-mark-widget {
+  padding: 4px 8px;
+  margin: 2px 0;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.mark-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: white;
+  background-color: rgba(255, 215, 0, 0.8);
+}
+
+.mark-content {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mark-user {
+  font-weight: bold;
+}
+
+.mark-comment {
+  font-style: italic;
+  margin-left: 4px;
+}
+
+.mark-time {
+  opacity: 0.8;
+  font-size: 0.75rem;
+  margin-left: 8px;
+}
+
+.mark-remove-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 8px;
+  border-radius: 2px;
+  opacity: 0.7;
+  transition: all 0.2s ease;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mark-remove-btn:hover {
+  opacity: 1;
+  background-color: rgba(255, 0, 0, 0.3);
+  color: #ff6b6b;
+  transform: scale(1.1);
+}
+
+/* Custom line highlight animation */
+@keyframes lineHighlight {
+  0% {
+    background-color: transparent;
+    border-left-color: transparent;
+  }
+  50% {
+    background-color: rgba(0, 123, 255, 0.2);
+    border-left-color: #007bff;
+  }
+  100% {
+    background-color: rgba(0, 123, 255, 0.1);
+    border-left-color: #007bff;
+  }
+}
+
+.user-line-highlight {
+  animation: lineHighlight 0.5s ease-in-out;
+}
+
+/* Marked line animation */
+@keyframes markHighlight {
+  0% {
+    background-color: rgba(255, 215, 0, 0.3);
+    border-left-color: #ffd700;
+  }
+  100% {
+    background-color: rgba(255, 215, 0, 0.1);
+    border-left-color: #ffd700;
+  }
+}
+
+.marked-line {
+  animation: markHighlight 0.5s ease-in-out;
+}
+
+/* Line highlighting for collaborative editing */
+.user-line-highlight {
+  position: relative;
+  animation: lineGlow 2s ease-in-out infinite alternate;
+}
+
+.user-line-content {
+  position: relative;
+  border-radius: 3px;
+  transition: all 0.3s ease;
+}
+
+@keyframes lineGlow {
+  0% {
+    box-shadow: inset 0 0 5px rgba(0, 123, 255, 0.3);
+  }
+  100% {
+    box-shadow: inset 0 0 10px rgba(0, 123, 255, 0.5);
+  }
+}
+
+/* Enhanced line indicator */
+.CodeMirror-line.user-line-highlight {
+  background: linear-gradient(90deg, rgba(0, 123, 255, 0.1) 0%, transparent 100%);
+  border-left: 3px solid rgba(0, 123, 255, 0.6);
+  padding-left: 8px !important;
+  transition: all 0.3s ease;
+}
+
+/* Cursor line indicator */
+.user-cursor-line {
+  background-color: rgba(0, 255, 0, 0.1);
+  border-left: 2px solid rgba(0, 255, 0, 0.6);
+  animation: cursorPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes cursorPulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
