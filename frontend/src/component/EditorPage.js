@@ -261,7 +261,7 @@ function EditorPage() {
 
     setIsCompiling(true);
     try {
-      const response = await axios.post("https://35f9l72x-5000.inc1.devtunnels.ms/compile", {
+      const response = await axios.post("https://code-editor-fe83.onrender.com/compile", {
         code: codeRef.current,
         language: selectedLanguage.toLowerCase(),
         method: "jdoodle",
