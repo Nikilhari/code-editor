@@ -11,7 +11,7 @@ import "../components/collaborative.css";
 import CodeMirror from "codemirror";
 import { ACTIONS } from "../Actions";
 
-function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingUsers, setUserLines, markedLines }) {
+function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingUsers, setUserLines, markedLines, onActivityLog, selectedLanguage }) {
   const editorRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const activityTimeoutRef = useRef(null);
@@ -23,8 +23,31 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
   const [markingLine, setMarkingLine] = useState(null);
   const [markComment, setMarkComment] = useState("");
 
+  // AI Suggestions state
+  const [showAISuggestions, setShowAISuggestions] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const [suggestionsPosition, setSuggestionsPosition] = useState({ top: 0, left: 0 });
+
+  // Add refs for debouncing activity logging
+  const activityLogTimeoutRef = useRef(null);
+  const pendingChangesRef = useRef({
+    hasChanges: false,
+    lastChangeTime: 0,
+    changedLines: new Set(),
+    changeDetails: []
+  });
+
   useEffect(() => {
     const init = async () => {
+      // Initialize pending changes ref properly
+      pendingChangesRef.current = {
+        hasChanges: false,
+        lastChangeTime: 0,
+        changedLines: new Set(),
+        changeDetails: []
+      };
+
       const editor = CodeMirror.fromTextArea(
         document.getElementById("realtimeEditor"),
         {
@@ -52,6 +75,62 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
             roomId,
             code,
           });
+
+          // Handle debounced activity logging with line tracking
+          if (onActivityLog && changes.text && changes.text.length > 0) {
+            // Ensure changedLines Set exists
+            if (!pendingChangesRef.current.changedLines) {
+              pendingChangesRef.current.changedLines = new Set();
+            }
+
+            // Track which lines were changed
+            const fromLine = changes.from.line + 1; // Convert to 1-based
+            const toLine = changes.to.line + 1;
+
+            // Add changed lines to the set
+            for (let line = fromLine; line <= toLine; line++) {
+              pendingChangesRef.current.changedLines.add(line);
+            }
+
+            // Store change details for better logging
+            const changeText = changes.text.join('\n');
+            const isMultiLine = changes.text.length > 1;
+            const isRemoval = changes.removed && changes.removed.length > 0;
+
+            // Mark that changes are pending
+            pendingChangesRef.current.hasChanges = true;
+            pendingChangesRef.current.lastChangeTime = Date.now();
+
+            // Clear existing timeout
+            if (activityLogTimeoutRef.current) {
+              clearTimeout(activityLogTimeoutRef.current);
+            }
+
+            // Set debounced timeout for activity logging (2 seconds after last change)
+            activityLogTimeoutRef.current = setTimeout(() => {
+              if (pendingChangesRef.current.hasChanges && pendingChangesRef.current.changedLines) {
+                const changedLinesArray = Array.from(pendingChangesRef.current.changedLines).sort((a, b) => a - b);
+                let logMessage = '';
+
+                if (changedLinesArray.length === 1) {
+                  logMessage = `made changes on line ${changedLinesArray[0]}`;
+                } else if (changedLinesArray.length <= 5) {
+                  logMessage = `made changes on lines ${changedLinesArray.join(', ')}`;
+                } else {
+                  const firstLine = changedLinesArray[0];
+                  const lastLine = changedLinesArray[changedLinesArray.length - 1];
+                  logMessage = `made changes on ${changedLinesArray.length} lines (${firstLine}-${lastLine})`;
+                }
+
+                onActivityLog('code_changed', username, logMessage);
+
+                // Reset pending changes
+                pendingChangesRef.current.hasChanges = false;
+                pendingChangesRef.current.changedLines = new Set();
+                pendingChangesRef.current.changeDetails = [];
+              }
+            }, 2000);
+          }
 
           // Handle typing indicators
           handleTypingActivity();
@@ -102,8 +181,23 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
       editorRef.current.on("focus", handleUserActivity);
       editorRef.current.on("cursorActivity", handleCursorActivity);
 
-      // Add right-click context menu for line marking
+      // Add right-click context menu for line marking and keyboard shortcuts
       const editorElement = editorRef.current.getWrapperElement();
+
+      // Add keyboard shortcut for AI suggestions (Ctrl+Space)
+      editorElement.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.code === 'Space') {
+          e.preventDefault();
+          requestAISuggestions();
+        }
+        // Close suggestions on Escape
+        if (e.key === 'Escape' && showAISuggestions) {
+          setShowAISuggestions(false);
+          setAiSuggestions([]);
+        }
+      });
+
+      // Add right-click context menu for line marking
       editorElement.addEventListener('contextmenu', (e) => {
         e.preventDefault();
 
@@ -150,7 +244,127 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
     }, 2000); // User stops typing after 2 seconds of inactivity
   };
 
-  // Handle line marking
+  // Handle AI suggestions request
+  const requestAISuggestions = async () => {
+    if (!editorRef.current) return;
+
+    const code = editorRef.current.getValue();
+    const cursor = editorRef.current.getCursor();
+    const language = selectedLanguage || 'javascript';
+
+    // Get cursor position on screen for positioning suggestions panel
+    const coords = editorRef.current.cursorCoords(cursor, 'local');
+    setSuggestionsPosition({ top: coords.bottom + 5, left: coords.left });
+
+    setIsLoadingSuggestions(true);
+    setShowAISuggestions(true);
+
+    try {
+      // const response = await fetch('http://localhost:5000/ai-suggestions', {
+      const response = await fetch('https://code-editor-fe83.onrender.com/ai-suggestions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          code,
+          language,
+          cursorPosition: cursor,
+          context: `Code editing in ${language}`
+        })
+      });
+
+      const data = await response.json();
+      setAiSuggestions(data.suggestions || []);
+
+      // Log AI suggestion request
+      if (onActivityLog) {
+        onActivityLog('ai_suggestion_requested', username, `requested AI suggestions for ${language} code`);
+      }
+
+    } catch (error) {
+      console.error('Failed to get AI suggestions:', error);
+      setAiSuggestions([{
+        title: 'Error loading suggestions',
+        description: 'Please try again',
+        code: '// Error occurred',
+        type: 'error',
+        confidence: 0
+      }]);
+    } finally {
+      setIsLoadingSuggestions(false);
+    }
+  };
+
+  // Apply AI suggestion
+  const applyAISuggestion = (suggestion) => {
+    if (!editorRef.current) return;
+
+    try {
+      const cursor = editorRef.current.getCursor();
+      const currentLine = editorRef.current.getLine(cursor.line);
+
+      // Different handling based on suggestion type
+      switch (suggestion.type) {
+        case 'completion':
+          // For completion, insert at cursor position
+          editorRef.current.replaceRange(suggestion.code, cursor);
+          break;
+
+        case 'improvement':
+        case 'fix':
+        case 'optimization':
+          // For improvements/fixes, try to replace the current line or insert after
+          if (currentLine.trim() === '') {
+            // If current line is empty, just insert
+            editorRef.current.replaceRange(suggestion.code, cursor);
+          } else {
+            // Insert on next line
+            const nextLinePos = { line: cursor.line + 1, ch: 0 };
+            editorRef.current.replaceRange('\n' + suggestion.code, nextLinePos);
+          }
+          break;
+
+        default:
+          // Default behavior - insert at cursor with proper spacing
+          let codeToInsert = suggestion.code;
+
+          // Add proper spacing if needed
+          if (cursor.ch > 0 && currentLine.charAt(cursor.ch - 1) !== ' ') {
+            codeToInsert = ' ' + codeToInsert;
+          }
+
+          editorRef.current.replaceRange(codeToInsert, cursor);
+          break;
+      }
+
+      // Focus the editor and trigger change event
+      editorRef.current.focus();
+
+      // Trigger the code change event
+      const updatedCode = editorRef.current.getValue();
+      onCodeChange(updatedCode);
+
+      // Emit code change to other users
+      if (socketRef.current) {
+        socketRef.current.emit(ACTIONS.CODE_CHANGE, {
+          roomId,
+          code: updatedCode,
+        });
+      }
+
+    } catch (error) {
+      console.error('Error applying AI suggestion:', error);
+    }
+
+    // Log AI suggestion application
+    if (onActivityLog) {
+      onActivityLog('ai_suggestion_applied', username, `applied AI suggestion: "${suggestion.title}"`);
+    }
+
+    setShowAISuggestions(false);
+    setAiSuggestions([]);
+  };
   const handleMarkLine = () => {
     if (markingLine !== null && socketRef.current) {
       socketRef.current.emit(ACTIONS.MARK_LINE, {
@@ -159,6 +373,12 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
         username,
         comment: markComment.trim()
       });
+
+      // Log marking activity
+      if (onActivityLog) {
+        const details = `marked line ${markingLine + 1}${markComment.trim() ? ': "' + markComment.trim() + '"' : ''}`;
+        onActivityLog('line_marked', username, details);
+      }
 
       setShowMarkDialog(false);
       setMarkComment("");
@@ -237,6 +457,19 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
         markId,
         username
       });
+
+      // Log unmarking activity
+      if (onActivityLog) {
+        const mark = Array.from(markedLines.values()).find(m =>
+          m.id === markId || markedLines.has(markId)
+        );
+        if (mark) {
+          const details = mark.username === username
+            ? `removed their mark from line ${mark.lineNumber + 1}`
+            : `removed ${mark.username}'s mark from line ${mark.lineNumber + 1}`;
+          onActivityLog('line_unmarked', username, details);
+        }
+      }
     }
   };
 
@@ -376,6 +609,9 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
       if (cursorTimeoutRef.current) {
         clearTimeout(cursorTimeoutRef.current);
       }
+      if (activityLogTimeoutRef.current) {
+        clearTimeout(activityLogTimeoutRef.current);
+      }
 
       // Clear all line highlights
       Object.keys(lineHighlightsRef.current).forEach(socketId => {
@@ -389,6 +625,176 @@ function Editor({ socketRef, roomId, onCodeChange, username, clients, setTypingU
   return (
     <div style={{ height: "600px", position: "relative" }}>
       <textarea id="realtimeEditor"></textarea>
+
+      {/* AI Suggestions Panel */}
+      {showAISuggestions && (
+        <div
+          className="position-absolute bg-dark text-light rounded shadow-lg border border-info"
+          style={{
+            top: suggestionsPosition.top,
+            left: suggestionsPosition.left,
+            zIndex: 2001,
+            minWidth: "400px",
+            maxWidth: "600px",
+            maxHeight: "400px",
+            overflowY: "auto"
+          }}
+        >
+          <div className="p-3">
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h6 className="m-0 text-info">
+                🤖 AI Code Suggestions
+              </h6>
+              <button
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => {
+                  setShowAISuggestions(false);
+                  setAiSuggestions([]);
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {isLoadingSuggestions ? (
+              <div className="text-center py-4">
+                <div className="spinner-border spinner-border-sm text-info me-2" role="status">
+                  <span className="visually-hidden">Loading...</span>
+                </div>
+                <span className="text-muted">Getting AI suggestions...</span>
+              </div>
+            ) : aiSuggestions.length > 0 ? (
+              <div>
+                <small className="text-muted mb-3 d-block">
+                  Click on a suggestion to apply it, or press Escape to close
+                </small>
+                {aiSuggestions.map((suggestion, index) => {
+                  let badgeColor = 'secondary';
+                  let icon = '💡';
+
+                  switch (suggestion.type) {
+                    case 'completion':
+                      badgeColor = 'primary';
+                      icon = '✨';
+                      break;
+                    case 'improvement':
+                      badgeColor = 'success';
+                      icon = '🔧';
+                      break;
+                    case 'fix':
+                      badgeColor = 'warning';
+                      icon = '🐛';
+                      break;
+                    case 'optimization':
+                      badgeColor = 'info';
+                      icon = '⚡';
+                      break;
+                    case 'error':
+                      badgeColor = 'danger';
+                      icon = '❌';
+                      break;
+                    default:
+                      badgeColor = 'secondary';
+                      icon = '💡';
+                  }
+
+                  return (
+                    <div
+                      key={index}
+                      className="mb-3 p-3 rounded suggestion-item"
+                      style={{
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+                        e.currentTarget.style.borderColor = '#17a2b8';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                      }}
+                    >
+                      <div className="d-flex justify-content-between align-items-start mb-2">
+                        <div className="d-flex align-items-center">
+                          <span className="me-2">{icon}</span>
+                          <strong className="text-info">{suggestion.title}</strong>
+                        </div>
+                        <div className="d-flex align-items-center">
+                          <span className={`badge bg-${badgeColor} me-2`}>
+                            {suggestion.type}
+                          </span>
+                          {suggestion.confidence && (
+                            <small className="text-muted">
+                              {Math.round(suggestion.confidence * 100)}%
+                            </small>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-light mb-2" style={{ fontSize: '0.85rem' }}>
+                        {suggestion.description}
+                      </p>
+
+                      <div className="bg-black p-2 rounded" style={{ fontSize: '0.75rem' }}>
+                        <pre className="text-success m-0" style={{ whiteSpace: 'pre-wrap' }}>
+                          {suggestion.code}
+                        </pre>
+                      </div>
+
+                      <div className="mt-2 d-flex gap-2">
+
+                        <button
+                          className="btn btn-outline-info btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(suggestion.code);
+                            e.target.innerText = 'Copied!';
+                            setTimeout(() => {
+                              e.target.innerText = '📋 Copy';
+                            }, 1000);
+                          }}
+                        >
+                          📋 Copy
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-4 text-muted">
+                <span>No suggestions available</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Suggestions Trigger Button */}
+      <button
+        className="btn btn-info btn-sm position-absolute"
+        style={{
+          top: "10px",
+          right: "10px",
+          zIndex: 1000
+        }}
+        onClick={requestAISuggestions}
+        disabled={isLoadingSuggestions}
+        title="Get AI Code Suggestions (Ctrl+Space)"
+      >
+        {isLoadingSuggestions ? (
+          <>
+            <div className="spinner-border spinner-border-sm me-1" role="status">
+              <span className="visually-hidden">Loading...</span>
+            </div>
+            AI...
+          </>
+        ) : (
+          <>🤖 AI Suggestions</>
+        )}
+      </button>
 
       {/* Line Marking Dialog */}
       {showMarkDialog && (

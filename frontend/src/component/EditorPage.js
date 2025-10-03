@@ -20,6 +20,8 @@ function EditorPage() {
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [userLines, setUserLines] = useState(new Map()); // Track which line each user is on
   const [markedLines, setMarkedLines] = useState(new Map()); // Track marked lines
+  const [activityLogs, setActivityLogs] = useState([]); // Track activity logs
+  const [isLogWindowOpen, setIsLogWindowOpen] = useState(false); // Control log window visibility
   const codeRef = useRef(null);
 
   const Location = useLocation();
@@ -34,6 +36,28 @@ function EditorPage() {
       hash = username.charCodeAt(i) + ((hash << 5) - hash);
     }
     return `hsl(${hash % 290}, 85%, 40%)`; // HSL for vibrant colors
+  };
+
+  // Helper function to add activity log
+  const addActivityLog = (type, user, details = '', broadcast = true) => {
+    const logEntry = {
+      id: Date.now() + Math.random(),
+      type,
+      user,
+      details,
+      timestamp: new Date().toISOString(),
+      localTime: new Date().toLocaleTimeString()
+    };
+
+    setActivityLogs(prev => [logEntry, ...prev.slice(0, 99)]); // Keep last 100 logs
+
+    // Broadcast to other users if needed
+    if (broadcast && socketRef.current) {
+      socketRef.current.emit(ACTIONS.ACTIVITY_LOG, {
+        roomId,
+        log: logEntry
+      });
+    }
   };
 
   useEffect(() => {
@@ -56,6 +80,9 @@ function EditorPage() {
       socketRef.current.on(ACTIONS.JOINED, ({ clients, username, socketId }) => {
         if (username !== Location.state?.username) {
           toast.success(`${username} joined the room.`);
+          addActivityLog('user_joined', username, 'joined the room', false); // Don't broadcast own logs
+        } else {
+          addActivityLog('user_joined', username, 'joined the room', false);
         }
         // Assign each client a unique color
         const updatedClients = clients.map((client) => ({
@@ -75,6 +102,7 @@ function EditorPage() {
 
       socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
         toast.success(`${username} left the room`);
+        addActivityLog('user_left', username, 'left the room', false);
         setClients((prev) => prev.filter((client) => client.socketId !== socketId));
         setActiveUsers((prev) => {
           const newSet = new Set(prev);
@@ -166,6 +194,9 @@ function EditorPage() {
           return newMap;
         });
 
+        const logDetails = `marked line ${markData.lineNumber + 1}${markData.comment ? ': "' + markData.comment + '"' : ''}`;
+        addActivityLog('line_marked', markData.username, logDetails, false);
+
         if (markData.username !== Location.state?.username) {
           try {
             toast(`${markData.username} marked line ${markData.lineNumber + 1}${markData.comment ? ': ' + markData.comment : ''}`, {
@@ -187,6 +218,11 @@ function EditorPage() {
           const newMap = new Map(prev);
           const mark = newMap.get(markId);
           if (mark) {
+            const logDetails = originalMarker === removedBy
+              ? `removed their mark from line ${mark.lineNumber + 1}`
+              : `removed ${originalMarker}'s mark from line ${mark.lineNumber + 1}`;
+            addActivityLog('line_unmarked', removedBy, logDetails, false);
+
             newMap.delete(markId);
             if (removedBy !== Location.state?.username) {
               try {
@@ -219,6 +255,21 @@ function EditorPage() {
         });
         setMarkedLines(marksMap);
       });
+
+      // Listen for activity logs from other users
+      socketRef.current.on(ACTIONS.ACTIVITY_LOG, ({ log }) => {
+        if (log.user !== Location.state?.username) {
+          setActivityLogs(prev => [log, ...prev.slice(0, 99)]);
+        }
+      });
+
+      // Sync activity logs for new users
+      socketRef.current.on(ACTIONS.SYNC_ACTIVITY_LOGS, ({ logs }) => {
+        setActivityLogs(logs || []);
+      });
+
+      // Request existing activity logs
+      socketRef.current.emit(ACTIONS.SYNC_ACTIVITY_LOGS, { roomId });
     };
     init();
 
@@ -232,6 +283,8 @@ function EditorPage() {
       socketRef.current.off(ACTIONS.MARK_LINE);
       socketRef.current.off(ACTIONS.UNMARK_LINE);
       socketRef.current.off(ACTIONS.SYNC_MARKS);
+      socketRef.current.off(ACTIONS.ACTIVITY_LOG);
+      socketRef.current.off(ACTIONS.SYNC_ACTIVITY_LOGS);
     };
   }, []);
 
@@ -262,6 +315,7 @@ function EditorPage() {
     setIsCompiling(true);
     try {
       const response = await axios.post("https://code-editor-fe83.onrender.com/compile", {
+        // const response = await axios.post("http://localhost:5000/compile", {
         code: codeRef.current,
         language: selectedLanguage.toLowerCase(),
         method: "jdoodle",
@@ -279,6 +333,10 @@ function EditorPage() {
 
   const toggleCompileWindow = () => {
     setIsCompileWindowOpen(!isCompileWindowOpen);
+  };
+
+  const toggleLogWindow = () => {
+    setIsLogWindowOpen(!isLogWindowOpen);
   };
 
   // Function to delete a marked line
@@ -498,9 +556,14 @@ function EditorPage() {
         {/* Editor panel */}
         <div className="col-md-10 text-light d-flex flex-column">
           <div className="bg-dark p-2 d-flex justify-content-between align-items-center">
-            <small className="text-muted">
-              💡 Right-click on any line to mark it for collaboration
-            </small>
+            <div className="d-flex align-items-center">
+              <small className="text-muted me-3">
+                💡 Right-click on any line to mark it for collaboration
+              </small>
+              <small className="text-info">
+                🤖 Press Ctrl+Space for AI suggestions
+              </small>
+            </div>
             <select
               className="form-select w-auto"
               value={selectedLanguage}
@@ -530,6 +593,8 @@ function EditorPage() {
             setTypingUsers={setTypingUsers}
             setUserLines={setUserLines}
             markedLines={markedLines}
+            onActivityLog={addActivityLog}
+            selectedLanguage={selectedLanguage}
             onCodeChange={(code) => {
               codeRef.current = code;
             }}
@@ -540,7 +605,7 @@ function EditorPage() {
             <div
               className="position-fixed bg-dark text-light px-3 py-2 rounded shadow"
               style={{
-                bottom: isCompileWindowOpen ? "32vh" : "80px",
+                bottom: isCompileWindowOpen ? "32vh" : isLogWindowOpen ? "37vh" : "80px",
                 right: "20px",
                 zIndex: 1000,
                 maxWidth: "350px",
@@ -612,11 +677,28 @@ function EditorPage() {
 
       {/* Compiler toggle button */}
       <button
-        className="btn btn-primary position-fixed bottom-0 end-0 m-3"
+        className="btn btn-primary position-fixed"
         onClick={toggleCompileWindow}
-        style={{ zIndex: 1050 }}
+        style={{
+          bottom: "20px",
+          right: "20px",
+          zIndex: 1050
+        }}
       >
         {isCompileWindowOpen ? "Close Compiler" : "Open Compiler"}
+      </button>
+
+      {/* Activity Log toggle button */}
+      <button
+        className="btn btn-info position-fixed"
+        onClick={toggleLogWindow}
+        style={{
+          bottom: "20px",
+          right: "200px",
+          zIndex: 1050
+        }}
+      >
+        📋 {isLogWindowOpen ? "Close Log" : "Activity Log"}
       </button>
 
       {/* Compiler Output Section */}
@@ -647,6 +729,122 @@ function EditorPage() {
 
         <div className="bg-black text-light p-3 rounded" style={{ minHeight: "10vh", whiteSpace: "pre-wrap" }}>
           {output || "Output will appear here after compilation"}
+        </div>
+      </div>
+
+      {/* Activity Log Window */}
+      <div
+        className={`bg-dark text-light p-3 border-top border-secondary ${isLogWindowOpen ? "d-block" : "d-none"}`}
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: isLogWindowOpen ? "35vh" : "0",
+          transition: "height 0.3s ease-in-out",
+          overflowY: "auto",
+          zIndex: 1030,
+        }}
+      >
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <div className="d-flex align-items-center">
+            <h5 className="m-0 me-3">📋 Activity Log</h5>
+            <small className="text-muted">({activityLogs.length} activities)</small>
+          </div>
+          <div>
+            <button
+              className="btn btn-outline-warning btn-sm me-2"
+              onClick={() => setActivityLogs([])}
+            >
+              Clear Log
+            </button>
+            <button className="btn btn-secondary btn-sm" onClick={toggleLogWindow}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-black text-light p-3 rounded" style={{ minHeight: "20vh", maxHeight: "25vh", overflowY: "auto" }}>
+          {activityLogs.length > 0 ? (
+            <div>
+              {activityLogs.map((log) => {
+                const client = clients.find(c => c.username === log.user);
+                const userColor = client ? client.color : '#007bff';
+
+                let icon = '💬';
+                let actionColor = '#ffffff';
+
+                switch (log.type) {
+                  case 'user_joined':
+                    icon = '🟢';
+                    actionColor = '#28a745';
+                    break;
+                  case 'user_left':
+                    icon = '🔴';
+                    actionColor = '#dc3545';
+                    break;
+                  case 'code_changed':
+                    icon = '📝';
+                    actionColor = '#17a2b8';
+                    break;
+                  case 'line_marked':
+                    icon = '📌';
+                    actionColor = '#ffc107';
+                    break;
+                  case 'line_unmarked':
+                    icon = '🗑️';
+                    actionColor = '#6c757d';
+                    break;
+                  case 'ai_suggestion_requested':
+                    icon = '🤖';
+                    actionColor = '#17a2b8';
+                    break;
+                  case 'ai_suggestion_applied':
+                    icon = '✨';
+                    actionColor = '#28a745';
+                    break;
+                  default:
+                    icon = '💬';
+                    actionColor = '#ffffff';
+                }
+
+                return (
+                  <div
+                    key={log.id}
+                    className="mb-2 p-2 rounded"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      borderLeft: `3px solid ${userColor}`,
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    <div className="d-flex align-items-center justify-content-between">
+                      <div className="d-flex align-items-center">
+                        <span className="me-2">{icon}</span>
+                        <span
+                          className="fw-bold me-2"
+                          style={{ color: userColor }}
+                        >
+                          {log.user}
+                        </span>
+                        <span style={{ color: actionColor }}>
+                          {log.details}
+                        </span>
+                      </div>
+                      <small className="text-muted">
+                        {log.localTime}
+                      </small>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center text-muted py-4">
+              <p>No activities yet...</p>
+              <small>Activities will appear here as users edit, mark lines, join, or leave the room.</small>
+            </div>
+          )}
         </div>
       </div>
     </div>

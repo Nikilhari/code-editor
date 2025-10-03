@@ -15,4 +15,6 @@ export const ACTIONS = {
   MARK_LINE: "mark-line",
   UNMARK_LINE: "unmark-line",
   SYNC_MARKS: "sync-marks",
+  ACTIVITY_LOG: "activity-log",
+  SYNC_ACTIVITY_LOGS: "sync-activity-logs",
 };
