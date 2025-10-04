@@ -831,7 +831,7 @@ function EditorPage() {
                           {log.details}
                         </span>
                       </div>
-                      <small className="text-muted">
+                      <small className="text-white">
                         {log.localTime}
                       </small>
                     </div>

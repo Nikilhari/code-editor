@@ -315,7 +315,7 @@ app.post("/ai-suggestions", async (req, res) => {
   try {
     if (!process.env.GROQ_API_KEY) {
       return res.status(500).json({ error: "Groq API key not configured" });
-    }
+    } 
 
     // Prepare the prompt for Groq
     const prompt = `You are an expert ${language} programmer. Analyze the following code and provide 3-5 intelligent code suggestions.
